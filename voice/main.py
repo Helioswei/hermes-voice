@@ -13,7 +13,7 @@ warnings.filterwarnings("ignore", message=".*pkg_resources.*")
 import zhconv
 
 from .av_recorder import AVRecorder
-from .wake_word import WakeWordDetector
+from .stt_engine import create_stt_engine
 from .wake_word_engine import WakeWordEngine
 from .hermes_client import HermesClient
 from .tts import TTSEngine
@@ -115,11 +115,7 @@ def main():
         silence_timeout=config.get("silence_timeout", 1.5),
         max_record_sec=config.get("max_record_sec", 15),
     )
-    stt = WakeWordDetector(
-        model_size=config.get("model_size", "tiny"),
-        model_source=config.get("model_source", "huggingface"),
-        model_path=config.get("model_path") or None,
-    )
+    stt = create_stt_engine(config)
     wake_words = config.get("kws_keywords", ["小九"])
     kws = WakeWordEngine(
         keywords=wake_words,

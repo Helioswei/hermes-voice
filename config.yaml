@@ -1,13 +1,22 @@
+# ── 会话 ──────────────────────────────────────
 session_timeout: 30          # 跟随时窗秒数
 samplerate: 16000            # 音频采样率
 silence_timeout: 1.5         # VAD 静音判定秒数
 max_record_sec: 15           # 单次录音上限
-model_size: tiny             # faster-whisper 模型尺寸（tiny/base/small）
-model_source: modelscope     # huggingface / modelscope / local
-model_path: ""               # 本地模型路径（model_source=local 时使用）
+
+# ── STT 语音转文字引擎 ────────────────────────
+# engine: whisper | 后续可扩展 sensevoice 等
+stt_engine: sensevoice
+stt_model_size: small          # tiny / base / small / medium
+stt_model_source: modelscope   # huggingface / modelscope / local
+stt_model_path: ""             # 本地模型路径（source=local 时使用）
+
+# ── 唤醒词 ─────────────────────────────────────
 kws_keywords:                 # 自定义唤醒词（可多个）
   - "小九"
   - "轩轩"
 kws_threshold: 0.25           # 唤醒阈值（0.1-0.9，越高越严格）
+
+# ── Hermes API ─────────────────────────────────
 hermes_url: "http://localhost:8642"
 hermes_api_key: "hermes-voice-key"

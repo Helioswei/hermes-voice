@@ -11,3 +11,4 @@ onnxruntime>=1.15
 sherpa-onnx>=1.12
 pypinyin>=0.50
 zhconv>=1.4
+huggingface-hub>=0.20

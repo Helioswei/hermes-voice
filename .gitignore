@@ -23,7 +23,8 @@ env/
 
 # Downloaded model files
 models/kws/
-models/whisper/
+models/whisper-*/
+models/sensevoice/
 
 # Config with secrets
 config.local.yaml
