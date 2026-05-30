@@ -21,8 +21,9 @@ env/
 # macOS
 .DS_Store
 
-# Model cache
-~/.cache/huggingface/
+# Downloaded model files
+models/kws/
+models/whisper/
 
 # Config with secrets
 config.local.yaml

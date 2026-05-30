@@ -4,17 +4,49 @@ import signal
 import subprocess
 import sys
 import time
+import warnings
 from logging.handlers import RotatingFileHandler
 
 import yaml
 
-from .recorder import AudioRecorder
+warnings.filterwarnings("ignore", message=".*pkg_resources.*")
+import zhconv
+
+from .av_recorder import AVRecorder
 from .wake_word import WakeWordDetector
-from .stt import process_transcription
+from .wake_word_engine import WakeWordEngine
 from .hermes_client import HermesClient
 from .tts import TTSEngine
 
 logger = logging.getLogger("hermes-voice")
+
+# ANSI color codes
+_COLORS = {
+    logging.DEBUG: "\033[2m",       # dim
+    logging.INFO: "\033[0m",        # default
+    logging.WARNING: "\033[33m",    # yellow
+    logging.ERROR: "\033[31m",      # red
+    logging.CRITICAL: "\033[35m",   # magenta
+}
+_RESET = "\033[0m"
+
+
+class ColoredFormatter(logging.Formatter):
+    """Formatter with ANSI colors, filename, and line number."""
+
+    def format(self, record):
+        color = _COLORS.get(record.levelno, "")
+        # Override levelname to show filename:lineno
+        record.colored_levelname = (
+            f"{color}[{record.filename}:{record.lineno}]{_RESET}"
+        )
+        # Build format manually for clean output
+        ts = self.formatTime(record, "%H:%M:%S")
+        return (
+            f"{color}{ts}{_RESET} "
+            f"{record.colored_levelname} "
+            f"{record.getMessage()}"
+        )
 
 
 def load_config(path="config.yaml"):
@@ -24,6 +56,19 @@ def load_config(path="config.yaml"):
     api_key = os.environ.get("HERMES_API_KEY") or cfg.get("hermes_api_key", "")
     cfg["hermes_api_key"] = api_key
     return cfg
+
+
+def _to_simplified(text):
+    """Convert traditional Chinese to simplified."""
+    return zhconv.convert(text, "zh-cn")
+
+
+def _strip_wake_word(text, keywords):
+    """Strip wake word prefix from transcribed text."""
+    for kw in sorted(keywords, key=len, reverse=True):
+        if text.startswith(kw):
+            return text[len(kw):].lstrip("，, ").strip()
+    return text
 
 
 def play_beep():
@@ -42,17 +87,19 @@ def setup_logging():
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, "hermes-voice.log")
 
-    fmt = logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"
+    # File handler: plain format with filename:lineno
+    file_fmt = logging.Formatter(
+        "%(asctime)s [%(filename)s:%(lineno)d] %(message)s",
+        datefmt="%H:%M:%S",
     )
-
     file_handler = RotatingFileHandler(
-        log_file, maxBytes=5_242_880, backupCount=3  # 5MB × 3
+        log_file, maxBytes=5_242_880, backupCount=3
     )
-    file_handler.setFormatter(fmt)
+    file_handler.setFormatter(file_fmt)
 
+    # Console handler: colored + filename:lineno
     console_handler = logging.StreamHandler()
-    console_handler.setFormatter(fmt)
+    console_handler.setFormatter(ColoredFormatter())
 
     logging.basicConfig(level=logging.INFO, handlers=[file_handler, console_handler])
 
@@ -61,17 +108,22 @@ def main():
     setup_logging()
     config = load_config()
 
-    logger.info("initialising components …")
+    logger.info("初始化组件 …")
 
-    recorder = AudioRecorder(
+    recorder = AVRecorder(
         samplerate=config.get("samplerate", 16000),
         silence_timeout=config.get("silence_timeout", 1.5),
         max_record_sec=config.get("max_record_sec", 15),
     )
-    wake = WakeWordDetector(
+    stt = WakeWordDetector(
         model_size=config.get("model_size", "tiny"),
         model_source=config.get("model_source", "huggingface"),
         model_path=config.get("model_path") or None,
+    )
+    wake_words = config.get("kws_keywords", ["小九"])
+    kws = WakeWordEngine(
+        keywords=wake_words,
+        threshold=config.get("kws_threshold", 0.25),
     )
     hermes = HermesClient(
         base_url=config.get("hermes_url", "http://localhost:8642"),
@@ -79,22 +131,17 @@ def main():
     )
     tts = TTSEngine()
 
-    # ── 消息日志 ＋ TTS 期间关麦防回声 ──────────────
     def _speak_and_recover(recorder, tts, text):
-        """关 → TTS → 开（读一次静默缓冲耗尽残留回声）。"""
-        recorder.stop()          # 关麦
-        try:
-            tts.speak(text)      # 阻塞直到读完
-        finally:
-            recorder.start()     # 开麦（同步启动流）
-            time.sleep(0.3)      # 等流稳定 + 排空残留缓冲区
+        """Speak TTS reply. AEC cancels TTS audio from mic signal."""
+        tts.speak(text)
 
     session_timeout = config.get("session_timeout", 30)
 
     def shutdown(sig, frame):
-        logger.info("shutting down …")
+        logger.info("正在关闭 …")
         tts.stop()
         recorder.stop()
+        kws.close()
         hermes.close()
         sys.exit(0)
 
@@ -102,37 +149,47 @@ def main():
     signal.signal(signal.SIGTERM, shutdown)
 
     state = "LISTENING"
-    logger.info("[STATE] ready — say \"小九\" to wake me up")
+    logger.info("状态机 → 就绪，说\"小九\"唤醒我")
 
     while True:
         try:
             if state == "LISTENING":
-                audio = recorder.read_utterance(idle_timeout=None)
+                recorder.set_wake_hook(kws.process_chunk)
 
-                if audio is None or len(audio) == 0:
+                if not recorder.wait_for_wake_word():
                     continue
 
-                text = wake.transcribe(audio)
-                if not text:
+                detected = kws.last_keyword
+                recorder.set_wake_hook(None)
+                recorder.stop()
+                kws.reset()
+                play_beep()
+                tts.speak("我在")
+
+                logger.info("唤醒词 → 检测到\"%s\"，等待指令 …", detected)
+
+                recorder.start()
+                audio = recorder.read_utterance(
+                    idle_timeout=session_timeout
+                )
+                if audio is None:
+                    logger.info("状态机 → 没听到指令，回到待唤醒")
                     continue
 
-                logger.info("[MIC] %s", text)
+                text = _to_simplified(stt.transcribe(audio))
+                if not text or not text.strip():
+                    continue
 
-                if wake.contains_wake_word(text):
-                    play_beep()
-                    command = process_transcription(text, state)
-                    logger.info("[MIC] (command) %s", command)
+                logger.info("麦克风→ %s", text)
 
-                    reply = hermes.send(command or "你好")
-                    logger.info("[API] → %s", command or "你好")
-                    logger.info("[API] ← %s", reply)
-                    logger.info("[TTS] %s", reply)
-                    _speak_and_recover(recorder, tts, reply)
-                    state = "AWAKE"
-                    logger.info("[STATE] entered AWAKE (%.0fs follow-up window)",
-                                session_timeout)
-                else:
-                    logger.info("[STATE] no wake word in text, staying in LISTENING")
+                reply = hermes.send(text)
+                logger.info("API → %s", reply)
+                logger.info("朗读 → %s", reply)
+                _speak_and_recover(recorder, tts, reply)
+                state = "AWAKE"
+                recorder.start()
+                logger.info("状态机 → 进入跟随时窗 (%.0f秒)",
+                            session_timeout)
 
             elif state == "AWAKE":
                 audio = recorder.read_utterance(
@@ -140,27 +197,24 @@ def main():
                 )
 
                 if audio is None:
-                    logger.info("[STATE] follow-up window expired → LISTENING")
+                    logger.info("状态机 → 跟随时窗超时，回到待唤醒")
                     hermes.clear_context()
                     state = "LISTENING"
                     continue
 
-                text = wake.transcribe(audio)
-                if not text:
+                text = _to_simplified(stt.transcribe(audio))
+                if not text or not text.strip():
                     continue
 
-                logger.info("[MIC] %s", text)
-                command = process_transcription(text, state)
+                logger.info("麦克风→ %s", text)
 
-                if command:
-                    reply = hermes.send(command)
-                    logger.info("[API] → %s", command)
-                    logger.info("[API] ← %s", reply)
-                    logger.info("[TTS] %s", reply)
-                    _speak_and_recover(recorder, tts, reply)
+                reply = hermes.send(text)
+                logger.info("API → %s", reply)
+                logger.info("朗读 → %s", reply)
+                _speak_and_recover(recorder, tts, reply)
 
         except ConnectionError:
-            logger.warning("Hermes API unreachable, falling back to LISTENING")
+            logger.warning("Hermes API 不可达，回到待唤醒")
             _speak_and_recover(recorder, tts, "请先启动 Hermes 服务")
             state = "LISTENING"
 
@@ -168,7 +222,7 @@ def main():
             break
 
         except Exception:
-            logger.exception("unexpected error, recovering …")
+            logger.exception("意外错误，恢复中 …")
             state = "LISTENING"
 
     recorder.stop()

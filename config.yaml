@@ -5,5 +5,9 @@ max_record_sec: 15           # 单次录音上限
 model_size: tiny             # faster-whisper 模型尺寸（tiny/base/small）
 model_source: modelscope     # huggingface / modelscope / local
 model_path: ""               # 本地模型路径（model_source=local 时使用）
+kws_keywords:                 # 自定义唤醒词（可多个）
+  - "小九"
+  - "轩轩"
+kws_threshold: 0.25           # 唤醒阈值（0.1-0.9，越高越严格）
 hermes_url: "http://localhost:8642"
 hermes_api_key: "hermes-voice-key"

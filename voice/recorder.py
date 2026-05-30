@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+from collections import deque
 
 import numpy as np
 import sounddevice as sd
@@ -20,9 +21,9 @@ class AudioRecorder:
         self.silence_timeout = silence_timeout
         self.max_record_sec = max_record_sec
 
-        logger.info("loading silero-vad model …")
+        logger.info("加载 Silero VAD 模型 …")
         self._vad = load_silero_vad(onnx=True)
-        logger.info("silero-vad loaded")
+        logger.info("Silero VAD 加载完毕")
 
         self._buffer = []
         self._speaking = False
@@ -34,13 +35,21 @@ class AudioRecorder:
         self._stream = None
         self._running = False
 
+        # Wake-word hook — set via set_wake_hook()
+        self._wake_hook = None
+        self._wake_triggered = threading.Event()
+
+        # Ring buffer for trailing audio after wake-word detection
+        self._ring_buffer = deque(maxlen=int(samplerate * 5))  # 5 seconds
+        self._ring_lock = threading.Lock()
+
     def start(self):
         if self._stream is not None:
             return
         self._running = True
         self._reset_state()
 
-        logger.info("opening audio stream …")
+        logger.info("打开音频流 …")
         self._stream = sd.InputStream(
             samplerate=self.samplerate,
             channels=self.channels,
@@ -48,7 +57,7 @@ class AudioRecorder:
             blocksize=512,
         )
         self._stream.start()
-        logger.info("audio stream started, listening for wake word …")
+        logger.info("音频流已启动")
 
     def stop(self):
         self._running = False
@@ -57,6 +66,35 @@ class AudioRecorder:
             self._stream.close()
             self._stream = None
 
+    def set_wake_hook(self, hook):
+        """Set a callback(chunk) -> bool called on every audio chunk.
+
+        If the hook returns True, ``wait_for_wake_word()`` unblocks.
+        Pass ``None`` to disable.
+        """
+        self._wake_hook = hook
+        self._wake_triggered.clear()
+
+    def wait_for_wake_word(self, timeout=None):
+        """Block until the wake hook signals a detection or *timeout* expires.
+
+        Returns True if wake word was detected, False on timeout.
+        """
+        if not self._running:
+            self.start()
+        self._wake_triggered.clear()
+        return self._wake_triggered.wait(timeout=timeout)
+
+    def drain_ring_buffer(self):
+        """Atomically drain and return the trailing-audio ring buffer as float32."""
+        with self._ring_lock:
+            if self._ring_buffer:
+                audio = np.array(list(self._ring_buffer), dtype=np.float32)
+                self._ring_buffer.clear()
+                return audio
+            return None
+
+    # ------------------------------------------------------------------
     def read_utterance(self, idle_timeout=None):
         if not self._running:
             self.start()
@@ -98,23 +136,36 @@ class AudioRecorder:
             return
 
         if status:
-            logger.warning("audio stream status: %s", status)
+            logger.warning("音频流状态异常: %s", status)
 
         # sounddevice delivers float32 in [-1, 1] on macOS
         mono = indata[:, 0].copy()
+
+        # ── Wake-word hook (KWS) ─────────────────────
+        if self._wake_hook is not None:
+            try:
+                int16_chunk = (mono * 32767).astype("int16")
+                if self._wake_hook(int16_chunk):
+                    self._wake_triggered.set()
+            except Exception as exc:
+                logger.error("唤醒检测失败: %s", exc)
+
+        # ── Ring buffer (always active when running) ──
+        with self._ring_lock:
+            self._ring_buffer.extend(mono.tolist())
 
         try:
             tensor = torch.from_numpy(mono)
             prob = self._vad.audio_forward(tensor, self.samplerate).item()
         except Exception as exc:
-            logger.error("VAD failed: %s", exc)
+            logger.error("VAD 失败: %s", exc)
             return
 
         now = time.monotonic()
         with self._lock:
             if prob > 0.5:
                 if not self._speaking:
-                    logger.debug("speech started (VAD prob=%.3f)", prob)
+                    logger.debug("VAD 检测到语音 (prob=%.3f)", prob)
                     self._speaking = True
                     self._buffer = []
                     self._speech_end_time = None
@@ -125,7 +176,7 @@ class AudioRecorder:
                 if self._speech_end_time is None:
                     self._speech_end_time = now
                 elif now - self._speech_end_time >= self.silence_timeout:
-                    logger.debug("speech ended (%.1fs silence)", self.silence_timeout)
+                    logger.debug("语音结束 (%.1fs 静音)", self.silence_timeout)
                     audio = np.concatenate(self._buffer)
                     self._utterance_result = audio
                     self._speaking = False

@@ -1,11 +1,10 @@
 import os
-import re
 
 from faster_whisper import WhisperModel
 
 
 class WakeWordDetector:
-    """faster-whisper wrapper with "小九" wake-word detection.
+    """faster-whisper wrapper for Chinese STT.
 
     Three model sources:
 
@@ -47,40 +46,27 @@ class WakeWordDetector:
     def _prepare_modelscope(model_size, repo=None):
         """Download whisper model from ModelScope and convert to CTranslate2.
 
-        The ``openai-mirror/whisper-{size}`` repos on ModelScope contain the
-        original OpenAI Whisper (PyTorch format). ``faster-whisper`` needs
-        CTranslate2 format, so we convert it on first download.
-
-        Both the download and the converted output are cached so subsequent
-        runs are instant.
+        Model is stored in ``models/whisper/`` under the project root.
         """
         from modelscope import snapshot_download
 
         if not repo:
             repo = f"openai-mirror/whisper-{model_size}"
 
-        model_name = repo.replace("/", "_")
-        cache_root = os.path.join(
-            os.path.expanduser("~"), ".cache", "hermes-voice"
+        project_root = os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))
         )
-        os.makedirs(cache_root, exist_ok=True)
+        ct2_path = os.path.join(project_root, "models", "whisper")
+        os.makedirs(ct2_path, exist_ok=True)
 
-        # Path for the converted CTranslate2 model
-        ct2_path = os.path.join(cache_root, f"{model_name}-ct2")
-
-        # Already converted → return immediately
-        if os.path.isdir(ct2_path) and os.path.isfile(
-                os.path.join(ct2_path, "model.bin")):
+        if os.path.isfile(os.path.join(ct2_path, "model.bin")):
             return ct2_path
 
-        # Download original whisper model from ModelScope
-        # Only download PyTorch format, skip flax/tensorflow (unused)
         raw_path = snapshot_download(
             repo,
             ignore_file_pattern=["*.msgpack", "*.h5"],
         )
 
-        # Convert to CTranslate2 format
         from ctranslate2.converters import TransformersConverter
 
         print(f"Converting {repo} to CTranslate2 format …")
@@ -106,34 +92,10 @@ class WakeWordDetector:
 
         segments, _ = self.model.transcribe(
             audio, language="zh",
-            initial_prompt="你好，请问今天天气怎么样",
-            beam_size=1, vad_filter=False,
+            beam_size=5, vad_filter=True,
         )
         text = "".join(seg.text for seg in segments).strip()
         return text
-
-    # Characters whisper tiny often confuses with "九" (all pronounced jiǔ)
-    _WAKE_HOMOPHONES = {"九", "酒", "就", "久", "舅", "救", "旧"}
-
-    @staticmethod
-    def contains_wake_word(text):
-        if "小九" in text:
-            return True
-        idx = text.find("小")
-        if idx >= 0 and idx + 1 < len(text):
-            return text[idx + 1] in WakeWordDetector._WAKE_HOMOPHONES
-        return False
-
-    @staticmethod
-    def strip_wake_word(text):
-        stripped = re.sub(r"^小九[\s,，]*", "", text).strip()
-        if stripped != text:
-            return stripped
-        idx = text.find("小")
-        if idx >= 0 and idx + 1 < len(text) and \
-           text[idx + 1] in WakeWordDetector._WAKE_HOMOPHONES:
-            return text[idx + 2:].strip().lstrip("，,").strip()
-        return text.strip()
 
 
 def _has_gpu():

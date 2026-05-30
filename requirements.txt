@@ -8,3 +8,6 @@ pyobjc-framework-AVFoundation>=10
 numpy>=1.24
 pyyaml>=6.0
 onnxruntime>=1.15
+sherpa-onnx>=1.12
+pypinyin>=0.50
+zhconv>=1.4
