@@ -1,0 +1,10 @@
+silero-vad>=5.0
+sounddevice>=0.5
+faster-whisper>=1.0
+transformers>=4.0
+httpx>=0.27
+modelscope>=1.0
+pyobjc-framework-AVFoundation>=10
+numpy>=1.24
+pyyaml>=6.0
+onnxruntime>=1.15

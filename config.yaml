@@ -1,0 +1,9 @@
+session_timeout: 30          # 跟随时窗秒数
+samplerate: 16000            # 音频采样率
+silence_timeout: 1.5         # VAD 静音判定秒数
+max_record_sec: 15           # 单次录音上限
+model_size: tiny             # faster-whisper 模型尺寸（tiny/base/small）
+model_source: modelscope     # huggingface / modelscope / local
+model_path: ""               # 本地模型路径（model_source=local 时使用）
+hermes_url: "http://localhost:8642"
+hermes_api_key: "hermes-voice-key"
