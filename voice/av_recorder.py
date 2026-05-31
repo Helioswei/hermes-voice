@@ -157,13 +157,13 @@ class AVRecorder:
         """Set TTS playback state and VAD threshold during TTS.
 
         When active, VAD uses a higher threshold to reduce echo residuals
-        from triggering false interrupts.
+        from triggering false interrupts. The VAD state machine continues
+        uninterrupted — in-progress buffers are preserved.
         """
-        self._tts_active = active
-        self._tts_vad_threshold = threshold
-        if not active:
-            with self._lock:
-                self._speaking = False
+        with self._lock:
+            self._tts_active = active
+            self._tts_vad_threshold = threshold
+            if not active:
                 self._speech_start_time = None
 
     def check_interrupt(self, min_duration=0.3):
@@ -215,7 +215,7 @@ class AVRecorder:
                 with self._lock:
                     audio = self._utterance_result
                     self._utterance_result = None
-                self._utterance_ready.clear()
+                    self._utterance_ready.clear()
                 if audio is not None:
                     return audio
 
@@ -308,6 +308,7 @@ class AVRecorder:
                         self._speaking = False
                         self._buffer = []
                         self._speech_end_time = None
+                        self._speech_start_time = None
                         self._utterance_ready.set()
                         self._vad.reset_states()
 
