@@ -132,3 +132,31 @@ def resolve_sensevoice_model():
 
     print(f"SenseVoice model cached at {mdir}")
     return model_file, tokens_file
+
+
+# ── Validation ───────────────────────────────────────────────────────
+
+def validate_model_files(model_dir_path, required_files):
+    """Check that *required_files* exist in *model_dir_path* and are non-empty.
+
+    Parameters
+    ----------
+    model_dir_path : str
+        Directory containing model files.
+    required_files : list of str
+        Filenames (basenames) to check.
+
+    Raises
+    ------
+    FileNotFoundError
+        With a message listing all missing or empty files.
+    """
+    missing = []
+    for fname in required_files:
+        fpath = os.path.join(model_dir_path, fname)
+        if not os.path.isfile(fpath) or os.path.getsize(fpath) == 0:
+            missing.append(fname)
+    if missing:
+        raise FileNotFoundError(
+            f"Model files missing or empty in {model_dir_path}: {missing}"
+        )

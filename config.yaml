@@ -20,3 +20,7 @@ kws_threshold: 0.25           # 唤醒阈值（0.1-0.9，越高越严格）
 # ── Hermes API ─────────────────────────────────
 hermes_url: "http://localhost:8642"
 hermes_api_key: "hermes-voice-key"
+
+# ── TTS 打断（Barge-in） ──────────────────────────
+bargein_threshold: 0.65       # TTS 期间 VAD 阈值（0.0-1.0，越高越严格）
+bargein_duration: 0.3         # 打断确认时长（秒，默认 300ms）

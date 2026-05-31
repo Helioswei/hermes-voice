@@ -51,6 +51,14 @@ class WakeWordEngine:
         decoder = self._find(model_dir, "decoder-*.onnx")
         joiner = self._find(model_dir, "joiner-*.onnx")
 
+        from .models import validate_model_files
+        validate_model_files(model_dir, [
+            "tokens.txt",
+            os.path.basename(encoder),
+            os.path.basename(decoder),
+            os.path.basename(joiner),
+        ])
+
         self._spotter = sherpa_onnx.KeywordSpotter(
             tokens=tokens_path,
             encoder=encoder,

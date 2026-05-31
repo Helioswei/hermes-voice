@@ -7,6 +7,7 @@ import time
 import warnings
 from logging.handlers import RotatingFileHandler
 
+import AVFoundation
 import yaml
 
 warnings.filterwarnings("ignore", message=".*pkg_resources.*")
@@ -82,6 +83,40 @@ def play_beep():
         pass
 
 
+def check_mic_permission():
+    """Check macOS microphone permission. Raise if denied."""
+    status = AVFoundation.AVCaptureDevice.authorizationStatusForMediaType_(
+        AVFoundation.AVMediaTypeAudio
+    )
+    if status == AVFoundation.AVAuthorizationStatusDenied:
+        logger.critical(
+            "麦克风权限被拒绝。请在 系统设置 → 隐私与安全性 → 麦克风 中允许本应用"
+        )
+        sys.exit(1)
+    elif status == AVFoundation.AVAuthorizationStatusNotDetermined:
+        logger.info("请求麦克风权限 …")
+        # AVFoundation will prompt on first access, no explicit call needed.
+        # The later recorder.start() triggers the system permission dialog.
+
+
+def validate_config(cfg):
+    """Validate required config keys and their types."""
+    required = {
+        "samplerate": (int, float),
+        "silence_timeout": (int, float),
+        "hermes_url": str,
+        "hermes_api_key": str,
+    }
+    for key, expected_type in required.items():
+        if key not in cfg:
+            raise ValueError(f"配置缺少必要字段: {key}")
+        if not isinstance(cfg[key], expected_type):
+            raise TypeError(
+                f"配置字段 {key} 类型错误: "
+                f"期望 {expected_type.__name__}, 实际 {type(cfg[key]).__name__}"
+            )
+
+
 def setup_logging():
     log_dir = os.path.join(os.path.dirname(__file__), "..", "logs")
     os.makedirs(log_dir, exist_ok=True)
@@ -107,6 +142,9 @@ def setup_logging():
 def main():
     setup_logging()
     config = load_config()
+
+    check_mic_permission()
+    validate_config(config)
 
     logger.info("初始化组件 …")
 
