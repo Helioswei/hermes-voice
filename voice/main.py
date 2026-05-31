@@ -208,8 +208,9 @@ def main():
     def _process_interruption(recorder, stt, hermes, tts, interrupted_audio):
         """Transcribe and respond to audio captured during TTS barge-in.
 
-        Uses the already-captured *interrupted_audio* directly — no second
-        read_utterance call that would lose the user's speech.
+        Uses the already-captured *interrupted_audio* directly. Handles
+        recursive interrupts — if the reply TTS is also barged in, the
+        chain continues naturally.
         """
         if interrupted_audio is None:
             return
@@ -222,7 +223,9 @@ def main():
         try:
             reply = hermes.send(text)
             logger.info("API → %s", reply)
-            _speak_and_recover(recorder, tts, reply)
+            more_audio = _speak_and_recover(recorder, tts, reply)
+            if more_audio is not None:
+                _process_interruption(recorder, stt, hermes, tts, more_audio)
         except ConnectionError:
             logger.warning("打断处理: Hermes API 不可达")
 
