@@ -143,8 +143,10 @@ def main():
                 min_duration=config.get("bargein_duration", 0.3)
             )
 
-        completed = tts.speak(text, interrupt_check=check_barge_in)
-        recorder.set_tts_active(False)
+        try:
+            completed = tts.speak(text, interrupt_check=check_barge_in)
+        finally:
+            recorder.set_tts_active(False)
 
         if not completed:
             logger.info("TTS 被用户打断")
@@ -155,19 +157,15 @@ def main():
         return None
 
     def _process_interruption(recorder, stt, hermes, tts, interrupted_audio):
-        """Handle audio captured during TTS barge-in.
+        """Transcribe and respond to audio captured during TTS barge-in.
 
-        If the user spoke during TTS playback and we have their audio,
-        transcribe it, send to Hermes, and read the reply.
+        Uses the already-captured *interrupted_audio* directly — no second
+        read_utterance call that would lose the user's speech.
         """
         if interrupted_audio is None:
             return
-        # 最多等 3 秒让用户把话说完
-        audio = recorder.read_utterance(idle_timeout=3.0)
-        if audio is None:
-            return
 
-        text = _to_simplified(stt.transcribe(audio))
+        text = _to_simplified(stt.transcribe(interrupted_audio))
         if not text or not text.strip():
             return
 
