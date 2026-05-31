@@ -128,8 +128,56 @@ def main():
     tts = TTSEngine()
 
     def _speak_and_recover(recorder, tts, text):
-        """Speak TTS reply. AEC cancels TTS audio from mic signal."""
-        tts.speak(text)
+        """Speak TTS reply with barge-in support.
+
+        Returns audio bytes (numpy float32) if user interrupted TTS,
+        None if TTS completed normally or text was empty.
+        """
+        if not text or not text.strip():
+            return None
+
+        recorder.set_tts_active(True, config.get("bargein_threshold", 0.65))
+
+        def check_barge_in():
+            return recorder.check_interrupt(
+                min_duration=config.get("bargein_duration", 0.3)
+            )
+
+        completed = tts.speak(text, interrupt_check=check_barge_in)
+        recorder.set_tts_active(False)
+
+        if not completed:
+            logger.info("TTS 被用户打断")
+            # 等待 VAD 完成当前语句的缓冲（最多 3 秒）
+            audio = recorder.read_utterance(idle_timeout=3.0)
+            return audio
+
+        return None
+
+    def _process_interruption(recorder, stt, hermes, tts, interrupted_audio):
+        """Handle audio captured during TTS barge-in.
+
+        If the user spoke during TTS playback and we have their audio,
+        transcribe it, send to Hermes, and read the reply.
+        """
+        if interrupted_audio is None:
+            return
+        # 最多等 3 秒让用户把话说完
+        audio = recorder.read_utterance(idle_timeout=3.0)
+        if audio is None:
+            return
+
+        text = _to_simplified(stt.transcribe(audio))
+        if not text or not text.strip():
+            return
+
+        logger.info("打断→ %s", text)
+        try:
+            reply = hermes.send(text)
+            logger.info("API → %s", reply)
+            _speak_and_recover(recorder, tts, reply)
+        except ConnectionError:
+            logger.warning("打断处理: Hermes API 不可达")
 
     session_timeout = config.get("session_timeout", 30)
 
@@ -186,11 +234,12 @@ def main():
                 reply = hermes.send(text)
                 logger.info("API → %s", reply)
                 logger.info("朗读 → %s", reply)
-                _speak_and_recover(recorder, tts, reply)
+                interrupted = _speak_and_recover(recorder, tts, reply)
                 state = "AWAKE"
                 recorder.start()
                 logger.info("状态机 → 进入跟随时窗 (%.0f秒)",
                             session_timeout)
+                _process_interruption(recorder, stt, hermes, tts, interrupted)
 
             elif state == "AWAKE":
                 audio = recorder.read_utterance(
@@ -212,7 +261,8 @@ def main():
                 reply = hermes.send(text)
                 logger.info("API → %s", reply)
                 logger.info("朗读 → %s", reply)
-                _speak_and_recover(recorder, tts, reply)
+                interrupted = _speak_and_recover(recorder, tts, reply)
+                _process_interruption(recorder, stt, hermes, tts, interrupted)
 
         except ConnectionError as e:
             logger.warning("Hermes API 不可达 (%s)，回到待唤醒", e)
