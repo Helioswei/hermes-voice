@@ -266,7 +266,7 @@ def main():
 
         except ConnectionError as e:
             logger.warning("Hermes API 不可达 (%s)，回到待唤醒", e)
-            _speak_and_recover(recorder, tts, "请先启动 Hermes 服务")
+            tts.speak("请先启动 Hermes 服务")
             state = "LISTENING"
 
         except KeyboardInterrupt:
