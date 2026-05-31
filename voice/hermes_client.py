@@ -7,7 +7,7 @@ class HermesClient:
     Maintains a multi-turn conversation context in ``messages``.
     """
 
-    def __init__(self, base_url, api_key, timeout=30):
+    def __init__(self, base_url, api_key, timeout=120):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout

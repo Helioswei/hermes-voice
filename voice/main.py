@@ -172,6 +172,7 @@ def main():
     hermes = HermesClient(
         base_url=config.get("hermes_url", "http://localhost:8642"),
         api_key=config["hermes_api_key"],
+        timeout=config.get("hermes_timeout", 120),
     )
     tts = TTSEngine()
 
