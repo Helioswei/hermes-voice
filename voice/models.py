@@ -5,7 +5,12 @@ Centralizes model resolution, download, and caching for all STT engines.
 
 import os
 import shutil
-import glob
+
+__all__ = [
+    "model_dir",
+    "resolve_whisper_model",
+    "resolve_sensevoice_model",
+]
 
 
 def _project_root():
@@ -58,8 +63,10 @@ def resolve_whisper_model(model_size, source="modelscope", path=None):
     if source == "modelscope":
         return _prepare_whisper_modelscope(model_size)
 
-    # huggingface → let faster-whisper handle it automatically
-    return model_size
+    if source == "huggingface":
+        return model_size
+
+    raise ValueError(f"Unknown model source: {source}")
 
 
 def _prepare_whisper_modelscope(model_size, repo=None):
