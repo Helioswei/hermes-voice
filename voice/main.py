@@ -133,13 +133,18 @@ def main():
 
     session_timeout = config.get("session_timeout", 30)
 
+    shutdown_requested = False
+
     def shutdown(sig, frame):
+        nonlocal shutdown_requested
+        if shutdown_requested:
+            return
+        shutdown_requested = True
         logger.info("正在关闭 …")
         tts.stop()
         recorder.stop()
         kws.close()
         hermes.close()
-        sys.exit(0)
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
@@ -147,7 +152,7 @@ def main():
     state = "LISTENING"
     logger.info("状态机 → 就绪，说\"小九\"唤醒我")
 
-    while True:
+    while not shutdown_requested:
         try:
             if state == "LISTENING":
                 recorder.set_wake_hook(kws.process_chunk)
@@ -209,8 +214,8 @@ def main():
                 logger.info("朗读 → %s", reply)
                 _speak_and_recover(recorder, tts, reply)
 
-        except ConnectionError:
-            logger.warning("Hermes API 不可达，回到待唤醒")
+        except ConnectionError as e:
+            logger.warning("Hermes API 不可达 (%s)，回到待唤醒", e)
             _speak_and_recover(recorder, tts, "请先启动 Hermes 服务")
             state = "LISTENING"
 

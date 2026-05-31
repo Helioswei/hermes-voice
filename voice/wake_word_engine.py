@@ -38,7 +38,7 @@ class WakeWordEngine:
         Detection threshold (0.0–1.0). Higher = fewer false triggers.
     """
 
-    def __init__(self, keywords=None, threshold=0.25):
+    def __init__(self, keywords=None, threshold=0.25, keywords_score=None):
         if keywords is None:
             keywords = ["小九"]
 

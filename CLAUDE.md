@@ -58,3 +58,12 @@ Two states, managed in `voice/main.py`:
 ### Dependencies
 
 Python 3.12+, macOS 13+ (AVSpeechSynthesizer), Homebrew (portaudio), Hermes Gateway (running on localhost:8642).
+
+## Coding Guidelines
+
+Apply the [Karpathy LLM Coding Guidelines](https://x.com/karpathy/status/2015883857489522876):
+
+1. **Think Before Coding** — State assumptions explicitly before implementing. Surface ambiguities and tradeoffs. Push back on overcomplicated approaches.
+2. **Simplicity First** — Minimum code that solves the problem. No speculative features, abstractions, or configurability. If 200 lines can be 50, rewrite it.
+3. **Surgical Changes** — Touch only what the task requires. Don't improve adjacent code, refactor what isn't broken, or change style. Clean up orphans your changes create; leave pre-existing dead code alone.
+4. **Goal-Driven Execution** — Define verifiable success criteria before starting. For multi-step tasks, state plan as `step → verify: check`. Loop until criteria are met.

@@ -103,9 +103,25 @@ class AVRecorder:
 
     def stop(self):
         self._running = False
+        # 解除所有可能的阻塞，防止主线程卡在 wait()
+        self._wake_triggered.set()
+        self._utterance_ready.set()
         if self._engine:
+            try:
+                input_node = self._engine.inputNode()
+                input_node.removeTapOnBus_(0)
+            except Exception:
+                pass
             self._engine.stop()
+            try:
+                self._engine.disconnectNodeInput_(self._engine.outputNode())
+            except Exception:
+                pass
             self._engine = None
+
+        if self._tap_thread is not None:
+            self._tap_thread.join(timeout=2.0)
+            self._tap_thread = None
 
     def close(self):
         self.stop()
@@ -118,7 +134,9 @@ class AVRecorder:
         if not self._running:
             self.start()
         self._wake_triggered.clear()
-        return self._wake_triggered.wait(timeout=timeout)
+        triggered = self._wake_triggered.wait(timeout=timeout)
+        # stop() 会 set() 这个 event 来解除阻塞，此时应返回 False
+        return triggered and self._running
 
     def drain_ring_buffer(self):
         with self._ring_lock:
@@ -140,7 +158,7 @@ class AVRecorder:
         if idle_timeout is not None:
             timeout_at = time.monotonic() + idle_timeout
 
-        while self._running:
+        while self._running and self._engine is not None:
             remaining = _remaining_or_none(timeout_at)
             if remaining is not None and remaining <= 0:
                 self._reset_state()
