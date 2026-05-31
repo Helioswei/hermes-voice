@@ -199,8 +199,9 @@ def main():
 
         if not completed:
             logger.info("TTS 被用户打断")
-            # 等待 VAD 完成当前语句的缓冲（最多 3 秒）
-            audio = recorder.read_utterance(idle_timeout=3.0)
+            # 等待 VAD 完成当前语句（最多 3 秒）
+            # 不用 read_utterance() — 它会 reset VAD 状态，丢掉已经缓冲的音频
+            audio = recorder.wait_utterance(timeout=3.0)
             return audio
 
         return None
@@ -222,12 +223,37 @@ def main():
         logger.info("打断→ %s", text)
         try:
             reply = hermes.send(text)
+            reply = _renew_if_pending(recorder, stt, hermes, reply)
             logger.info("API → %s", reply)
             more_audio = _speak_and_recover(recorder, tts, reply)
             if more_audio is not None:
                 _process_interruption(recorder, stt, hermes, tts, more_audio)
         except ConnectionError:
             logger.warning("打断处理: Hermes API 不可达")
+
+    def _renew_if_pending(recorder, stt, hermes, current_reply):
+        """If VAD captured speech during last blocking call, re-request.
+
+        When ``hermes.send()`` takes many seconds (tool calls, slow LLM),
+        the user may have spoken in the meantime. VAD completed their
+        utterance and stored it in ``_utterance_result``.  This function
+        consumes that audio, transcribes it, and makes a new API call so
+        the assistant responds to what the user *actually* just said,
+        not to the stale context.
+        """
+        audio = recorder.consume_utterance()
+        if audio is None:
+            return current_reply
+        text = _to_simplified(stt.transcribe(audio))
+        if not text or not text.strip():
+            return current_reply
+        logger.info("等待期间→ %s", text)
+        try:
+            new_reply = hermes.send(text)
+            logger.info("API → %s", new_reply)
+            return new_reply
+        except ConnectionError:
+            return current_reply
 
     session_timeout = config.get("session_timeout", 30)
 
@@ -282,7 +308,7 @@ def main():
                 logger.info("麦克风→ %s", text)
 
                 reply = hermes.send(text)
-                logger.info("API → %s", reply)
+                reply = _renew_if_pending(recorder, stt, hermes, reply)
                 logger.info("朗读 → %s", reply)
                 interrupted = _speak_and_recover(recorder, tts, reply)
                 state = "AWAKE"
@@ -309,7 +335,7 @@ def main():
                 logger.info("麦克风→ %s", text)
 
                 reply = hermes.send(text)
-                logger.info("API → %s", reply)
+                reply = _renew_if_pending(recorder, stt, hermes, reply)
                 logger.info("朗读 → %s", reply)
                 interrupted = _speak_and_recover(recorder, tts, reply)
                 _process_interruption(recorder, stt, hermes, tts, interrupted)

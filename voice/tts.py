@@ -12,10 +12,12 @@ class SpeechDelegate(NSObject):
     def init(self):
         self = objc.super(SpeechDelegate, self).init()
         self.finished = False
+        self._current_utterance = None
         return self
 
     def speechSynthesizer_didFinishSpeechUtterance_(self, synthesizer, utterance):
-        self.finished = True
+        if self._current_utterance is None or utterance is self._current_utterance:
+            self.finished = True
 
 
 class TTSEngine:
@@ -59,6 +61,7 @@ class TTSEngine:
         utterance.setVoice_(voice)
 
         delegate = self.synthesizer.delegate()
+        delegate._current_utterance = utterance
         delegate.finished = False
 
         self.synthesizer.speakUtterance_(utterance)

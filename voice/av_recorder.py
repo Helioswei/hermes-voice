@@ -159,21 +159,35 @@ class AVRecorder:
         When active, VAD uses a higher threshold to reduce echo residuals
         from triggering false interrupts. The VAD state machine continues
         uninterrupted — in-progress buffers are preserved.
+
+        When entering TTS mode, stale ``_utterance_result`` from prior
+        VAD activity (e.g. background music) is cleared so only speech
+        captured *during* this TTS can trigger a barge-in.
         """
         with self._lock:
             self._tts_active = active
             self._tts_vad_threshold = threshold
-            if not active:
+            if active:
+                self._utterance_result = None
+                self._utterance_ready.clear()
+                logger.info("TTS-active=True (VAD threshold=%.2f)", threshold)
+            else:
                 self._speech_start_time = None
+                logger.info("TTS-active=False")
 
     def check_interrupt(self, min_duration=0.3):
-        """Check if user has been speaking continuously for *min_duration*.
+        """Check if user has spoken during TTS playback.
 
-        Returns True only when VAD has detected sustained speech exceeding
-        the duration threshold — prevents transient noise from triggering
-        an interrupt.
+        Returns True in two scenarios:
+
+        - VAD has already completed an utterance (``_utterance_result`` is set).
+          The user finished speaking while we were busy (e.g. HTTP wait).
+        - VAD is currently detecting speech exceeding *min_duration*.
+          The user is actively speaking right now.
         """
         with self._lock:
+            if self._utterance_result is not None:
+                return True
             if self._speaking and self._speech_start_time is not None:
                 elapsed = time.monotonic() - self._speech_start_time
                 return elapsed >= min_duration
@@ -192,6 +206,21 @@ class AVRecorder:
                 self._utterance_ready.clear()
                 return audio
             return None
+
+    def wait_utterance(self, timeout=3.0):
+        """Wait for VAD to complete an utterance, preserving in-progress buffer.
+
+        Unlike ``read_utterance()``, this does **not** reset VAD state or
+        clear the audio buffer — any speech already captured when barge-in
+        fired is preserved.
+        """
+        if self._utterance_ready.wait(timeout=timeout):
+            with self._lock:
+                audio = self._utterance_result
+                self._utterance_result = None
+                self._utterance_ready.clear()
+                return audio
+        return None
 
     def read_utterance(self, idle_timeout=None):
         if not self._running:
@@ -235,8 +264,8 @@ class AVRecorder:
             self._speaking = False
             self._speech_start_time = None
             self._speech_end_time = None
+            self._vad.reset_states()
         self._vad_buffer = np.array([], dtype=np.float32)
-        self._vad.reset_states()
 
     def _on_tap(self, buf, when):
         """AVAudioEngine tap callback — runs on audio thread."""
