@@ -1,6 +1,9 @@
+import logging
 import objc
 from Foundation import NSObject, NSRunLoop, NSDate
 import AVFoundation
+
+logger = logging.getLogger("hermes-voice")
 
 
 class SpeechDelegate(NSObject):
@@ -61,9 +64,15 @@ class TTSEngine:
         self.synthesizer.speakUtterance_(utterance)
 
         while not delegate.finished:
-            if interrupt_check and interrupt_check():
-                self.stop()
-                return False
+            if interrupt_check:
+                try:
+                    if interrupt_check():
+                        self.stop()
+                        logger.debug("TTS 被用户打断")
+                        return False
+                except Exception:
+                    # 回调异常时不打断，保持 TTS 继续播放
+                    pass
             NSRunLoop.currentRunLoop().runUntilDate_(
                 NSDate.dateWithTimeIntervalSinceNow_(0.1)
             )
