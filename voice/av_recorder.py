@@ -49,6 +49,11 @@ class AVRecorder:
         self._ring_buffer = deque(maxlen=int(samplerate * 5))
         self._ring_lock = threading.Lock()
 
+        # Barge-in (TTS 打断)
+        self._tts_active = False
+        self._tts_vad_threshold = 0.65   # TTS 期间 VAD 阈值
+        self._speech_start_time = None   # 当前语音起始时间（用于打断确认）
+
         # AVAudioEngine
         self._engine = None
         self._running = False
@@ -146,6 +151,48 @@ class AVRecorder:
                 return audio
             return None
 
+    # ── Barge-in support ─────────────────────────────────
+
+    def set_tts_active(self, active, threshold=0.65):
+        """Set TTS playback state and VAD threshold during TTS.
+
+        When active, VAD uses a higher threshold to reduce echo residuals
+        from triggering false interrupts.
+        """
+        self._tts_active = active
+        self._tts_vad_threshold = threshold
+        if not active:
+            with self._lock:
+                self._speaking = False
+                self._speech_start_time = None
+
+    def check_interrupt(self, min_duration=0.3):
+        """Check if user has been speaking continuously for *min_duration*.
+
+        Returns True only when VAD has detected sustained speech exceeding
+        the duration threshold — prevents transient noise from triggering
+        an interrupt.
+        """
+        with self._lock:
+            if self._speaking and self._speech_start_time is not None:
+                elapsed = time.monotonic() - self._speech_start_time
+                return elapsed >= min_duration
+            return False
+
+    def consume_utterance(self):
+        """Atomically retrieve a completed utterance without clearing VAD state.
+
+        Use this after an interrupt to grab the audio the user spoke during
+        TTS playback.
+        """
+        with self._lock:
+            if self._utterance_result is not None:
+                audio = self._utterance_result
+                self._utterance_result = None
+                self._utterance_ready.clear()
+                return audio
+            return None
+
     def read_utterance(self, idle_timeout=None):
         if not self._running:
             self.start()
@@ -186,6 +233,7 @@ class AVRecorder:
         with self._lock:
             self._buffer = []
             self._speaking = False
+            self._speech_start_time = None
             self._speech_end_time = None
         self._vad_buffer = np.array([], dtype=np.float32)
         self._vad.reset_states()
@@ -239,10 +287,12 @@ class AVRecorder:
 
             now = time.monotonic()
             with self._lock:
-                if prob > 0.5:
+                vad_threshold = self._tts_vad_threshold if self._tts_active else 0.5
+                if prob > vad_threshold:
                     if not self._speaking:
                         logger.debug("VAD 检测到语音 (prob=%.3f)", prob)
                         self._speaking = True
+                        self._speech_start_time = now  # 记录语音起始时间
                         self._buffer = []
                         self._speech_end_time = None
                     self._speech_end_time = None
