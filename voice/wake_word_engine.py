@@ -7,6 +7,8 @@ import numpy as np
 import sherpa_onnx
 from pypinyin import pinyin, Style
 
+from .models import validate_model_files
+
 logger = logging.getLogger("hermes-voice")
 
 
@@ -51,7 +53,6 @@ class WakeWordEngine:
         decoder = self._find(model_dir, "decoder-*.onnx")
         joiner = self._find(model_dir, "joiner-*.onnx")
 
-        from .models import validate_model_files
         validate_model_files(model_dir, [
             "tokens.txt",
             os.path.basename(encoder),

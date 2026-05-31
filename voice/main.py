@@ -84,13 +84,18 @@ def play_beep():
 
 
 def check_mic_permission():
-    """Check macOS microphone permission. Raise if denied."""
+    """Check macOS microphone permission. Exit with message if denied."""
     status = AVFoundation.AVCaptureDevice.authorizationStatusForMediaType_(
         AVFoundation.AVMediaTypeAudio
     )
     if status == AVFoundation.AVAuthorizationStatusDenied:
         logger.critical(
             "麦克风权限被拒绝。请在 系统设置 → 隐私与安全性 → 麦克风 中允许本应用"
+        )
+        sys.exit(1)
+    elif status == AVFoundation.AVAuthorizationStatusRestricted:
+        logger.critical(
+            "麦克风权限受系统限制 (家长控制/MDM)，无法访问麦克风"
         )
         sys.exit(1)
     elif status == AVFoundation.AVAuthorizationStatusNotDetermined:
@@ -111,9 +116,14 @@ def validate_config(cfg):
         if key not in cfg:
             raise ValueError(f"配置缺少必要字段: {key}")
         if not isinstance(cfg[key], expected_type):
+            expected_name = (
+                expected_type.__name__
+                if isinstance(expected_type, type)
+                else " or ".join(t.__name__ for t in expected_type)
+            )
             raise TypeError(
                 f"配置字段 {key} 类型错误: "
-                f"期望 {expected_type.__name__}, 实际 {type(cfg[key]).__name__}"
+                f"期望 {expected_name}, 实际 {type(cfg[key]).__name__}"
             )
 
 
