@@ -185,7 +185,7 @@ def main():
         if not text or not text.strip():
             return None
 
-        recorder.set_tts_active(True, config.get("bargein_threshold", 0.65))
+        recorder.set_tts_active(True, config.get("bargein_threshold", 0.55))
 
         def check_barge_in():
             return recorder.check_interrupt(
