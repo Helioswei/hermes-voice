@@ -37,6 +37,7 @@ class AVRecorder:
         self._speech_end_time = None
         self._utterance_ready = threading.Event()
         self._utterance_result = None
+        self._utterance_completed_at = 0.0
         self._lock = threading.Lock()
 
         # Wake-word hook
@@ -169,6 +170,7 @@ class AVRecorder:
             self._tts_vad_threshold = threshold
             if active:
                 self._utterance_result = None
+                self._utterance_completed_at = 0.0
                 self._utterance_ready.clear()
                 logger.info("TTS-active=True (VAD threshold=%.2f)", threshold)
             else:
@@ -176,19 +178,18 @@ class AVRecorder:
                 logger.info("TTS-active=False")
 
     def check_interrupt(self, min_duration=0.3):
-        """Check if user has spoken during TTS playback.
+        """Check if user has been speaking continuously for *min_duration* during TTS.
 
-        Returns True in two scenarios:
+        Only the ``_speaking`` path is used — ``_utterance_result`` is deliberately
+        excluded because coughs/throat-clearing trigger VAD completion and would
+        cause false barge-ins that bypass the duration gate.
 
-        - VAD has already completed an utterance (``_utterance_result`` is set).
-          The user finished speaking while we were busy (e.g. HTTP wait).
-        - VAD is currently detecting speech exceeding *min_duration*.
-          The user is actively speaking right now.
+        Speech captured during HTTP wait is handled by ``_renew_if_pending()``
+        in ``main.py``, which consumes it **before** TTS ever starts.
         """
         with self._lock:
-            if self._utterance_result is not None:
-                return True
-            if self._speaking and self._speech_start_time is not None:
+            if (self._speaking and self._speech_start_time is not None
+                    and self._speech_end_time is None):
                 elapsed = time.monotonic() - self._speech_start_time
                 return elapsed >= min_duration
             return False
@@ -334,6 +335,7 @@ class AVRecorder:
                         logger.debug("语音结束 (%.1fs 静音)", self.silence_timeout)
                         audio = np.concatenate(self._buffer)
                         self._utterance_result = audio
+                        self._utterance_completed_at = now
                         self._speaking = False
                         self._buffer = []
                         self._speech_end_time = None

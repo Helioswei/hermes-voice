@@ -24,4 +24,4 @@ hermes_timeout: 120           # HTTP 请求超时（秒），天气/搜索等工
 
 # ── TTS 打断（Barge-in） ──────────────────────────
 bargein_threshold: 0.55       # TTS 期间 VAD 阈值（0.0-1.0，越高越严格，实测0.65偏保守）
-bargein_duration: 0.3         # 打断确认时长（秒，默认 300ms）
+bargein_duration: 0.5         # 打断确认时长（秒，咳嗽 <500ms 会被过滤）

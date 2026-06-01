@@ -72,6 +72,16 @@ def _strip_wake_word(text, keywords):
     return text
 
 
+def _is_valid_speech(text):
+    """Check if transcribed text has meaningful content (not just cough/noise).
+
+    A cough or background pop may trigger VAD and produce blank or
+    punctuation-only transcription (e.g. ``。``). This filters those out
+    while allowing single-character responses like ``是`` / ``好``.
+    """
+    return bool(text and text.strip() and any(c.isalnum() for c in text.strip()))
+
+
 def play_beep():
     try:
         subprocess.run(
@@ -199,9 +209,10 @@ def main():
 
         if not completed:
             logger.info("TTS 被用户打断")
-            # 等待 VAD 完成当前语句（最多 3 秒）
-            # 不用 read_utterance() — 它会 reset VAD 状态，丢掉已经缓冲的音频
-            audio = recorder.wait_utterance(timeout=3.0)
+            # 等待 VAD 完成当前语句（打断触发时用户确实正在说话）
+            # 3 秒不够（用户说 2 秒 + VAD 静音确认 1.5 秒 = 3.5 秒）
+            # 用 max_record_sec 作为上限，避免背景噪音持续触发 VAD 导致死等
+            audio = recorder.wait_utterance(timeout=config.get("max_record_sec", 15))
             return audio
 
         return None
@@ -217,7 +228,7 @@ def main():
             return
 
         text = _to_simplified(stt.transcribe(interrupted_audio))
-        if not text or not text.strip():
+        if not _is_valid_speech(text):
             return
 
         logger.info("打断→ %s", text)
@@ -274,7 +285,8 @@ def main():
     signal.signal(signal.SIGTERM, shutdown)
 
     state = "LISTENING"
-    logger.info("状态机 → 就绪，说\"小九\"唤醒我")
+    kw_display = " / ".join(wake_words)
+    logger.info("状态机 → 就绪，说\"%s\"唤醒我", kw_display)
 
     while not shutdown_requested:
         try:
@@ -286,14 +298,12 @@ def main():
 
                 detected = kws.last_keyword
                 recorder.set_wake_hook(None)
-                recorder.stop()
                 kws.reset()
                 play_beep()
                 tts.speak("我在")
 
                 logger.info("唤醒词 → 检测到\"%s\"，等待指令 …", detected)
 
-                recorder.start()
                 audio = recorder.read_utterance(
                     idle_timeout=session_timeout
                 )
@@ -302,7 +312,7 @@ def main():
                     continue
 
                 text = _to_simplified(stt.transcribe(audio))
-                if not text or not text.strip():
+                if not _is_valid_speech(text):
                     continue
 
                 logger.info("麦克风→ %s", text)
@@ -329,7 +339,7 @@ def main():
                     continue
 
                 text = _to_simplified(stt.transcribe(audio))
-                if not text or not text.strip():
+                if not _is_valid_speech(text):
                     continue
 
                 logger.info("麦克风→ %s", text)
